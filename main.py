@@ -5,69 +5,98 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 
 BOT_TOKEN = "8767544995:AAGAlinr9hXMHTEiYzsI6X0zvBRJtOzpWdc"
 
-def get_terabox_direct_link(terabox_url: str):
-    # Multi-API resolver fallback
-    api_url = f"https://terabox-dl.qtcloud.workers.dev/api/get-info?url={terabox_url}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+def extract_terabox_id(url: str):
+    match = re.search(r'/s/([a-zA-Z0-9_-]+)', url)
+    if match:
+        return match.group(1)
+    # Direct query param check
+    match_surl = re.search(r'surl=([a-zA-Z0-9_-]+)', url)
+    if match_surl:
+        return match_surl.group(1)
+    return None
+
+def get_direct_download(target_url: str):
+    share_id = extract_terabox_id(target_url)
+    if not share_id:
+        return None
+
+    # Multi-Engine Endpoints for bypass
+    endpoints = [
+        f"https://ytshorts.savetube.me/api/v1/terabox-downloader?url={target_url}",
+        f"https://api.syndicate.workers.dev/terabox?url={target_url}",
+        f"https://teradl-api.dapuntaratya.com/generate_file?id={share_id}"
+    ]
     
-    try:
-        response = requests.get(api_url, headers=headers, timeout=15)
-        data = response.json()
-        
-        # Check qtcloud response
-        if data.get("ok") and "downloadUrl" in data:
-            return {
-                "title": data.get("filename", "Video/File"),
-                "download_link": data.get("downloadUrl"),
-                "fast_link": data.get("downloadUrl")
-            }
-        
-        # Backup API
-        fallback_api = f"https://terabox-videodownloader.online/api/fetch?url={terabox_url}"
-        fb_res = requests.get(fallback_api, headers=headers, timeout=15).json()
-        if fb_res.get("download_link"):
-            return {
-                "title": fb_res.get("title", "Video/File"),
-                "download_link": fb_res.get("download_link"),
-                "fast_link": fb_res.get("download_link")
-            }
-            
-        return None
-    except Exception:
-        return None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
+
+    for ep in endpoints:
+        try:
+            res = requests.get(ep, headers=headers, timeout=12)
+            if res.status_code == 200:
+                data = res.json()
+                
+                # Format 1
+                if "response" in data and isinstance(data["response"], list) and len(data["response"]) > 0:
+                    item = data["response"][0]
+                    return {
+                        "title": item.get("title", "Video File"),
+                        "link": item.get("resolutions", {}).get("Fast Download", item.get("download_link"))
+                    }
+                
+                # Format 2
+                if "download_url" in data:
+                    return {
+                        "title": data.get("file_name", "Video File"),
+                        "link": data.get("download_url")
+                    }
+                
+                # Format 3
+                if "direct_link" in data:
+                    return {
+                        "title": data.get("title", "Video File"),
+                        "link": data.get("direct_link")
+                    }
+        except Exception:
+            continue
+
+    return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome!\n\nMujhe koi bhi Terabox video/file ka link send karein, main direct link nikal kar doonga."
+        "👋 Welcome!\n\nMujhe koi bhi Terabox link bhejein, direct stream/download link mil jayega."
     )
 
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if any(domain in text for domain in ["terabox", "1024tera", "teraboxapp", "terafileshare", "nephobox"]):
-        status_msg = await update.message.reply_text("⏳ Processing... Link extract ho raha hai.")
+    if any(k in text for k in ["terabox", "1024tera", "teraboxapp", "terafileshare", "4funbox", "mirrobox"]):
+        msg = await update.message.reply_text("⚡ Fast link banaya ja raha hai...")
+        
         url_match = re.search(r'(https?://[^\s]+)', text)
         if not url_match:
-            await status_msg.edit_text("❌ Sahi link nahi mila.")
+            await msg.edit_text("❌ Valid link nahi mila.")
             return
 
-        target_url = url_match.group(0)
-        result = get_terabox_direct_link(target_url)
+        url = url_match.group(0)
+        data = get_direct_download(url)
         
-        if result:
-            reply_text = (
-                f"🎬 **Title:** {result['title']}\n\n"
-                f"⚡ **Direct Fast Link:**\n{result['download_link']}"
+        if data and data.get("link"):
+            reply = (
+                f"🎬 **File:** {data['title']}\n\n"
+                f"⚡ **Direct Fast Link:**\n{data['link']}"
             )
-            await status_msg.edit_text(reply_text, parse_mode="Markdown")
+            await msg.edit_text(reply)
         else:
-            await status_msg.edit_text("❌ Link extract nahi ho saka. Yeh file private ho sakti hai ya server busy hai.")
+            await msg.edit_text("❌ Is file ka direct link block/private hai ya expired ho chuka hai.")
     else:
-        await update.message.reply_text("Kripya valid Terabox link bhejein.")
+        await update.message.reply_text("Kripya koi Terabox link bhejein.")
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling()
 
 if __name__ == "__main__":
